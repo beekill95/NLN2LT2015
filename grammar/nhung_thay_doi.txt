@@ -1,0 +1,3 @@
+thay doi expression trong phep gan assignment thanh lhs va liet ke nhung thanh phan trong lhs ra
+
+thay doi SELF tro thanh literal

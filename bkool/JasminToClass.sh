@@ -1,0 +1,2 @@
+java -jar ../tools/Jasmin/jasmin.jar -d solutions/1 solutions/1/*.j
+java -cp solutions/1:./lib/:./bin/:/home/beekill/bin/eclipse/plugins/org.scala-lang.scala-library_2.11.7.v20150622-112736-1fbce4612c.jar a > solutions/1.txt

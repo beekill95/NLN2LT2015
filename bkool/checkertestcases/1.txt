@@ -1,0 +1,61 @@
+class Shape {
+	length, width:float;
+	d:bool;
+	float getArea() {
+		return 1.0;
+	}
+	Shape(length, width:float) {
+		self.length := length;
+		self.width := width;
+	}
+}
+
+class Rectangle extends Shape {
+	float getArea() {
+		return self.length * self.width;
+	}
+}
+
+class Triangle extends Shape {
+	s:Shape;
+	float getArea() {
+		self.s.d := false;
+		return self.length * self.width / 2;
+	}
+	void func(arr:Shape[7]) {}
+	integer[7] func1() {
+		x:integer[7];
+		return x;
+	}
+}
+
+class Example2 {
+	final integer y = 10;
+	final integer x = y;
+	aPI:integer;
+	integer foo(x:integer) {return x;}
+	void main() {
+		final integer y = self.y + 9 - 10 - 2 - 8;
+		arr:Shape[7];
+		i:integer;
+		sum:float;
+		
+		io.writeIntLn(1 + 2 + 3 + self.foo(y) % 5);
+		io.writeFloatLn(1 + 2 + 3 + self.foo(2) % 5);
+		io.writeBoolLn(io.readBool());
+		io.writeStrLn("quan" ^ " dep " ^ " trai!");
+		
+		i := 0;
+		while (i < 7) do {
+			arr[i] := null;
+			i := i + 1;
+		}
+		
+		i := 0;
+		sum := 0;
+		while (true) do {
+			sum := sum + arr[i].getArea();
+			if (i == 7) then break; else continue;
+		}
+	}
+}

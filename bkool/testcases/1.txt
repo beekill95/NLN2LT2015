@@ -1,0 +1,5 @@
+class a {
+	void static  main() {
+		io.writeFloatLn(+5 + -5 * 4. / 5. + 5);
+	}
+}

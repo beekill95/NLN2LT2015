@@ -1,0 +1,11 @@
+class Example1 {
+	integer factorial(n:integer) {
+		if n == 0 then return 1; else return n * self.factorial(n - 1);
+	}
+	void main() {
+		x:integer;
+		x:=io.readLine();
+		io.writeIntLn(self.factorial(x));
+	}
+}
+
