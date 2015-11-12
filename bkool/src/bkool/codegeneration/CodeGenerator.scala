@@ -51,8 +51,13 @@ object TestCodeGenerator {
 		val mem = List(Member("main",Static,Method,MethodType(List(),VoidType),None))
     val cls = ClassData("a","",mem)
     
+    val cls_test = new GlobalEnvVisitor().visit(ast, null).asInstanceOf[ListClass].value
+    println(cls_test)
+    println(cls)
+    
     val ini = init()
-    val gl = List(cls,ini)
+    //val gl = List(cls,ini)
+    val gl = cls_test :+ ini
     
 		val gc = new CodeGenVisitor(ast,gl,dir)
 		gc.visit(ast, null);
@@ -120,14 +125,79 @@ class MVisitor extends Visitor {
   def visitNullLiteral(ast: NullLiteral.type, c: Context): Object = c
   def visitSelfLiteral(ast: SelfLiteral.type, c: Context): Object = c
 }
-  // TODO: CodeGenVisitor
 
+class GlobalEnvVisitor extends MVisitor {
+  override def visitProgram(ast:Program, o:Context) = ast.decl.foldLeft(ListClass(List()))((x,y) => visit(y,x).asInstanceOf[ListClass])
+  
+  override def visitClassDecl(ast:ClassDecl, o:Context) = {
+    val classList = o.asInstanceOf[ListClass].value
+    
+    // visit class's members
+    val memberList = ast.decl.foldLeft(ListMember(List()))((x,y) => visit(y,x).asInstanceOf[ListMember])
+    
+    // return list of classes with this class
+    ListClass(classList :+ ClassData(ast.name.name, ast.parent.name, memberList.value))
+  }
+  
+  override def visitAttributeDecl(ast:AttributeDecl, o:Context) = {
+    val memberList = o.asInstanceOf[ListMember].value
+    
+    val decl = visit(ast.decl, o).asInstanceOf[(String,Type,Value)]
+    val attDecl = Member(decl._1, ast.kind, Attribute, decl._2, if (decl._3 == null) None else Some(decl._3))
+    
+    ListMember(memberList :+ attDecl)
+  }
+  
+  override def visitMethodDecl(ast:MethodDecl, o:Context) = {
+    val memberList = o.asInstanceOf[ListMember].value
+    
+    val paraList = ast.param.map(visit(_,o)).asInstanceOf[List[Type]]
+    val retType = visit(ast.returnType, o).asInstanceOf[Type]
+    
+    val methodDecl = Member(ast.name.name, ast.kind, Method, MethodType(paraList, retType), None)
+    
+    ListMember(memberList :+ methodDecl)
+  }
+  
+  override def visitParamDecl(ast:ParamDecl, o:Context) = ast.paramType
+  
+  override def visitVarDecl(ast:VarDecl, o:Context):(String,Type,Value) = (ast.variable.name, ast.varType, null)
+  
+  override def visitConstDecl(ast:ConstDecl, o:Context):(String,Type,Value) = (ast.id.name, ast.constType, RawValue(ast.const))
+}
+
+  // TODO: CodeGenVisitor
 
 class CodeGenVisitor(astTree:AST,env:List[ClassData],dir:File) extends MVisitor {
 	
   def lookup[T](name:String,lst:List[T],func:T=>String):Option[T] = lst match {
     case List() => None
     case head::tail => if (name == func(head)) Some(head) else lookup(name,tail,func)
+  }
+  
+  def getMember(cls:String, memName:String):Member = {
+    // lookup for class
+    // somewhere in the code we assume that this will always return a class
+    val classDecl = lookup(cls, env, (x:ClassData) => x.cname).get
+    
+    // lookup for member name in that class
+    // somewhere in the code we assume that this will always return a member of that class
+    val memDecl = lookup(memName, classDecl.mem, (x:Member) => x.name).get
+    
+    // return to the caller
+    memDecl
+  }
+  
+  // this will check whether type1 should be converted to match type2
+  // type1: type is checked
+  // type2: type is checked with
+  // version: this will only deal with integer and float
+  def shouldBeConvert(type1:Type, type2:Type, emit:Emitter, frame:Frame):Option[(String,Type)] = type1 match {
+    case IntType => if (type2 == FloatType) {
+      Some((emit.emitI2F(frame), FloatType))
+    } else None
+    
+    case _ => None
   }
   
   // o ben ngoai truyen vao thi c la null
@@ -207,6 +277,18 @@ class CodeGenVisitor(astTree:AST,env:List[ClassData],dir:File) extends MVisitor 
     o
   }
   
+  override def visitAttributeDecl(ast:AttributeDecl, o:Context) = {
+    val subctx = o.asInstanceOf[SubContext]
+    val emit = subctx.emit
+    
+    val decl = visit(ast.decl, null).asInstanceOf[(String,Type,Value)]
+    
+    // this is just temporary
+    emit.printout(emit.emitATTRIBUTE(decl._1, ast.kind, decl._2, if (decl._3 == null) false else true, if (decl._3 == null) "" else decl._3.toString))
+    
+    // return to the caller
+    o
+  }
   
   // visit param decl se tra ve mot tuple (String, paramType, index cua param)
   // cai index duoc se duoc su dung sau nay
@@ -229,18 +311,29 @@ class CodeGenVisitor(astTree:AST,env:List[ClassData],dir:File) extends MVisitor 
     
     // visit nay la visit toi id (trong truong hop cu the nay thoi)
     val (str,typ) = visit(ast.parent,Access(emit,ctxt.classname,frame,nenv,false,true)).asInstanceOf[(String,Type)]
+    val member = getMember(str, ast.method.name)
+    val arguList = member.mtype.asInstanceOf[MethodType]
+    val arguArr = arguList.in.toArray
+    var index = 0
     
     val in = ast.params.foldLeft(("",List[Type]()))((y,x)=>
       {
         val (str1,typ1) = visit(x,Access(emit,ctxt.classname,frame,nenv,false,true)).asInstanceOf[(String,Type)]
-        (y._1 + str1,y._2 :+ typ1)
+        // we have to convert between float and integer
+        val converted = shouldBeConvert(typ1, arguArr(index), emit, frame)
+        index = index + 1;
+        if (converted == None)
+          (y._1 + str1,y._2 :+ typ1)
+        else
+          (y._1 + str1 + converted.get._1 , y._2 :+ converted.get._2)
       }
     )
     emit.printout(in._1)
     
     // cai nay la de bo cac params ra khoi frame
     ast.params.map(x=>frame.pop)
-    emit.printout(emit.emitINVOKESTATIC(str+"/"+ast.method.name,MethodType(in._2,VoidType),frame))
+    emit.printout(emit.emitINVOKESTATIC(str+"/"+ast.method.name,MethodType(in._2,VoidType),frame)) // cai nay co return type la voidtype chi ap dung cho phase 1 ma thoi
+                                                                                                   // do ham in ra man hinh khong co gia tri tra ve
              
     
   }
@@ -262,21 +355,7 @@ class CodeGenVisitor(astTree:AST,env:List[ClassData],dir:File) extends MVisitor 
     val rhExpr = visit(ast.right, o).asInstanceOf[(String,Type)]
     val sameType = lhExpr._2 == rhExpr._2       // check whether these two operands are of the same type
     
-    val (convertStr,converType) = if (ast.op == "\\") {
-      if (sameType) {
-        if (lhExpr._2 == IntType) 
-          (lhExpr._1 + emit.emitI2F(frame) + rhExpr._1 + emit.emitI2F(frame), FloatType)
-        else
-          (lhExpr._1 + rhExpr._1, FloatType)
-      } else {
-        // if this happens, these two types must be int and float
-        if (lhExpr._2 == IntType) {
-          (lhExpr._1 + emit.emitI2F(frame) + rhExpr._1, rhExpr._2)
-        } else {
-          (lhExpr._1 + rhExpr._1 + emit.emitI2F(frame), lhExpr._2)
-        }  
-      }
-    } else if (!sameType) {
+    val (convertStr,converType) = if (!sameType) {
       // if this happens, these two types must be int and float
       if (lhExpr._2 == IntType) {
         (lhExpr._1 + emit.emitI2F(frame) + rhExpr._1, rhExpr._2)
@@ -298,7 +377,10 @@ class CodeGenVisitor(astTree:AST,env:List[ClassData],dir:File) extends MVisitor 
       
       case ("*" | "/") => {
         if (sameType) {// if they are of the same type
-          (emit.emitMULOP(ast.op, lhExpr._2, frame), lhExpr._2)
+          if (lhExpr._2 == IntType && ast.op == "/") {
+            (emit.emitMULOP(ast.op, lhExpr._2, frame) + emit.emitI2F(frame), FloatType)
+          } else
+            (emit.emitMULOP(ast.op, lhExpr._2, frame), lhExpr._2)
         } else {
           (emit.emitMULOP(ast.op, FloatType, frame), FloatType)
         }
@@ -309,8 +391,8 @@ class CodeGenVisitor(astTree:AST,env:List[ClassData],dir:File) extends MVisitor 
         (emit.emitMOD(frame), IntType)
       }
       
-      case "\\" => {// this will return FloatType no matter the two types are
-        (emit.emitMULOP("\\", FloatType, frame), FloatType)
+      case "\\" => {// this only receives two intergers (we assume somewhere else in the code)
+        (emit.emitMULOP("\\", IntType, frame), IntType)
       }
       
       case _ => ("", null) // we don't have to process this at this stage
