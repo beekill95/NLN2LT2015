@@ -29,7 +29,7 @@ class Emitter(filename:String) {
     case VoidType => "V"
     case ArrayType(i,e) => "["+getJVMType(e)
     case ClassType(i) => "L"+i+";"
-    case MethodType(il,o) => "("+il.foldLeft("")(_+getJVMType(_))+")"+getJVMType(o)
+    case MethodType(il,o) => "("  + il.foldLeft("")(_+getJVMType(_))+ ")" + (if (o == null) "V" else getJVMType(o))
   }
   def getFullType(inType:Type):String = inType match {
     case IntType => "int"
@@ -83,6 +83,23 @@ class Emitter(filename:String) {
       }
       case _ => throw IllegalOperandException(in)
     }
+	
+	def emitPUSHCONST(in:Value,frame:Frame) = in match {
+	  case IntValue(value) => emitPUSHICONST(value, frame)
+	  case BoolValue(value) => emitPUSHICONST(value.toString, frame)
+	  case FloatValue(value) => emitPUSHFCONST(value.toString, frame)
+	  case StringValue(value) => {
+	    frame.push();
+	    jvm.emitLDC(value);
+	  }
+	  case _ => throw IllegalOperandException(in.toString)
+	}
+	
+	def emitNULLCONST(frame:Frame) = {
+	  frame.push()
+	  val nullStr = "\t" + "aconst_null" + "\n"
+	  nullStr
+	}
 
         ////////////////////////////////////////////////////////////////
 	/**
@@ -112,7 +129,8 @@ class Emitter(filename:String) {
     def emitALOAD(in:Type,frame:Frame) =  
 	  {
     	//..., arrayref, index -> ..., value
-    	frame.pop();
+      frame.push();
+    	//frame.pop();
       in match {
         case IntType => jvm.emitIALOAD()
         case FloatType => jvm.emitFALOAD()
@@ -122,6 +140,16 @@ class Emitter(filename:String) {
       }
 		
 	}
+    def emitALOAD(ind:Int, in:Type, frame:Frame) = {
+      frame.push();
+      //frame.pop();
+      in match {
+        case (IntType|BoolType) => jvm.emitILOAD(ind)
+        case FloatType => jvm.emitFLOAD(ind)
+        case (ArrayType(_,_)|ClassType(_)|StringType) => jvm.emitALOAD(ind)
+        case _ => throw IllegalOperandException(in.toString); 
+      }
+    }
     
         
     def emitASTORE(in:Type,frame:Frame) = 
@@ -135,6 +163,36 @@ class Emitter(filename:String) {
         case FloatType => jvm.emitFASTORE()
         case BoolType => jvm.emitBASTORE()
         case (ArrayType(_,_)|ClassType(_)) => jvm.emitAASTORE()
+        case _ => throw  IllegalOperandException(in.toString)
+      }
+		
+	}
+    
+    def emitASTORE(ind:Int, in:Type,frame:Frame) = 
+	{
+    	//..., arrayref, index, value -> ...
+    	
+    	//frame.pop();
+    	//frame.pop();
+      in match {
+        case (IntType|BoolType) => {
+          frame.pop();
+          jvm.emitISTORE(ind)
+        }
+        case FloatType => {
+          frame.pop();
+          jvm.emitFSTORE(ind)
+        }
+        case StringType => {
+          frame.pop();
+          jvm.emitASTORE(ind)
+        }
+        case (ArrayType(_,_)|ClassType(_)) => {
+          frame.pop();
+          //frame.pop();
+          //frame.pop();
+          jvm.emitASTORE(ind)
+        }
         case _ => throw  IllegalOperandException(in.toString)
       }
 		
@@ -264,7 +322,7 @@ class Emitter(filename:String) {
   */
   def emitINVOKESPECIAL(lexeme:String,in:Type ,frame:Frame) =
   { 
-    if (in.asInstanceOf[MethodType].out != VoidType)
+    if (in.asInstanceOf[MethodType].out != VoidType && in.asInstanceOf[MethodType].out != null)
       frame.push();   
     jvm.emitINVOKESPECIAL(lexeme,getJVMType(in));
   } 
@@ -280,6 +338,7 @@ class Emitter(filename:String) {
   */
   def emitINVOKEVIRTUAL(lexeme:String,in:Type ,frame:Frame) =
   { 
+    frame.pop()
     if (in.asInstanceOf[MethodType].out != VoidType)
       frame.push();   
     jvm.emitINVOKEVIRTUAL(lexeme,getJVMType(in));
@@ -422,12 +481,52 @@ class Emitter(filename:String) {
                       }
           case "<=" => if (in == IntType)
                           result.append(jvm.emitIFICMPGT(labelF));
-                      else {
+                       else {
                           result.append(jvm.emitFCMPL());
                           result.append(jvm.emitIFGT(labelF));
                     }
-          case "<>" => result.append(jvm.emitIFICMPEQ(labelF))
-          case "==" => result.append(jvm.emitIFICMPNE(labelF))
+          // is changed at 21:40 pm Nov 12 2015
+          case "<>" => in match {
+            case (IntType | BoolType) => result.append(jvm.emitIFICMPEQ(labelF))
+            case FloatType => {
+              result.append(jvm.emitFCMPL())
+              result.append(jvm.emitIFEQ(labelF))
+            }
+            case StringType => {
+              // for comparison between two strings
+              val stringCmpStr = "\t" + "if_acmpeq" + " " + "Label" + labelF + "\n";
+              val otherStringCmp = emitINVOKEVIRTUAL("java/lang/String/equals", MethodType(List(ClassType("java/lang/Object")), BoolType), frame)
+              result.append(otherStringCmp);
+              result.append(jvm.emitIFNE(labelF))
+              /*result.append(jvm.emitIFEQ(labelF))*/
+            }
+            case (ArrayType(_,_)|ClassType(_)) => {
+              val cmpStr = "\t" + "if_acmpeq" + " " + "Label" + labelF + "\n"
+              result.append(cmpStr)
+              //result.append(jvm.emitIFEQ(labelF))
+            }
+          }
+          // is changed at 21:30 pm Nov 12 2015
+          case "==" => in match {
+            case (IntType | BoolType) => result.append(jvm.emitIFICMPNE(labelF))
+            case FloatType => {
+              result.append(jvm.emitFCMPL())
+              result.append(jvm.emitIFNE(labelF))
+            }
+            case StringType => {
+              val stringCmpStr = "\t" + "if_acmpne" +  " " + "Label" + labelF + "\n"
+              val otherStringCmp = emitINVOKEVIRTUAL("java/lang/String/equals", MethodType(List(ClassType("java/lang/Object")), BoolType), frame)
+              //println(otherStringCmp)
+              result.append(otherStringCmp)
+              result.append(jvm.emitIFEQ(labelF))
+            }
+            // is added at 21:24 pm Nov 28 2015
+            case (ArrayType(_,_)|ClassType(_)) => {
+              val cmpStr = "\t" + "if_acmpne" + " " + "Label" + labelF + "\n"
+              result.append(cmpStr)
+              //result.append(jvm.emitIFNE(labelF))
+            }
+          }
         }
        	result.append(emitPUSHCONST("true", BoolType,frame));
        	result.append(emitGOTO(labelO,frame));
@@ -436,6 +535,8 @@ class Emitter(filename:String) {
        	result.append(emitLABEL(labelO,frame));
        	result.toString();
 	}
+  	
+  	//def emitCONCATOP(
 
 	/** 	generate the method directive for a function.
 	*	@param lexeme the qualified name of the method(i.e., class-name/method-name).
@@ -665,6 +766,7 @@ class Emitter(filename:String) {
       case (IntType | BoolType) => frame.pop();jvm.emitIRETURN()
       case FloatType => frame.pop();jvm.emitFRETURN()
       case VoidType => jvm.emitRETURN()
+      case StringType => frame.pop();jvm.emitARETURN()
       case ArrayType(_,_) => frame.pop();jvm.emitARETURN()
       case ClassType(_) => frame.pop();jvm.emitARETURN()
     }
